@@ -3,6 +3,8 @@
 This is an interoperable Go implementation of
 [libschannel](https://github.com/kisom/libschannel).
 
+GoDoc: [go-schannel](https://godoc.org/github.com/kisom/go-schannel/schannel)
+
 It provides bi-directional secure channels over an insecure communications
 channel (in this case, a Go `io.ReadWriter`).
 
