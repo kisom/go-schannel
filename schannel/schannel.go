@@ -223,6 +223,44 @@ func (sch *SChannel) doKEX(sk []byte, pk []byte, dialer bool) bool {
 	return true
 }
 
+// dialKEX handles the initial dialing key exchange.
+func (sch *SChannel) dialKEX(signer *[IdentityPrivateSize]byte, peer *[IdentityPublicSize]byte) bool {
+	var sk [kexPrvSize]byte
+	var pk [kexPubSize]byte
+
+	if !generateKeypair(&sk, &pk) {
+		return false
+	}
+
+	var kex [kexPubSize + SignatureSize]byte
+	copy(kex[:], pk[:])
+
+	if !signKEX(&kex, signer) {
+		return false
+	}
+
+	n, err := ch.Write(kex[:])
+	if err != nil || n != len(kex) {
+		return false
+	}
+
+	zero(kex[:], 0)
+	_, err = io.ReadFull(ch, kex[:])
+	if err != nil {
+		return false
+	}
+
+	if !verifyKEX(&kex, peer) {
+		return false
+	}
+
+	if !sch.doKEX(sk[:], kex[:kexPubSize], true) {
+		return false
+	}
+
+	return true
+}
+
 // Dial initialise the SChannel and initiate a key exchange over the
 // Channel. If this returns true, an authenticated secure channel has
 // been established. If signer is not nil, the key exchange will be
@@ -236,42 +274,49 @@ func Dial(ch Channel, signer *[IdentityPrivateSize]byte, peer *[IdentityPublicSi
 		return nil, false
 	}
 
-	var sk [kexPrvSize]byte
-	var pk [kexPubSize]byte
-
-	if !generateKeypair(&sk, &pk) {
-		return nil, false
-	}
-
-	var kex [kexPubSize + SignatureSize]byte
-	copy(kex[:], pk[:])
-
-	if !signKEX(&kex, signer) {
-		return nil, false
-	}
-
-	n, err := ch.Write(kex[:])
-	if err != nil || n != len(kex) {
-		return nil, false
-	}
-
-	zero(kex[:], 0)
-	_, err = io.ReadFull(ch, kex[:])
-	if err != nil {
-		return nil, false
-	}
-
-	if !verifyKEX(&kex, peer) {
-		return nil, false
-	}
-
-	if !sch.doKEX(sk[:], kex[:kexPubSize], true) {
+	if !sch.dialKEX(ch, signer, peer) {
 		return nil, false
 	}
 
 	sch.Channel = ch
 	sch.ready = true
 	return sch, true
+}
+
+func (sch *SChannel) listenKEX(ch Channel, signer *[IdentityPrivateSize]byte, peer *[IdentityPublicSize]byte) bool {
+	var sk [kexPrvSize]byte
+	var pk [kexPubSize]byte
+
+	if !generateKeypair(&sk, &pk) {
+		return false
+	}
+
+	var kex [kexPubSize + SignatureSize]byte
+	_, err := io.ReadFull(ch, kex[:])
+	if err != nil {
+		return false
+	}
+
+	if !verifyKEX(&kex, peer) {
+		return false
+	}
+
+	if !sch.doKEX(sk[:], kex[:kexPubSize], false) {
+		return false
+	}
+
+	copy(kex[:], pk[:])
+	if !signKEX(&kex, signer) {
+		return false
+	}
+
+	n, err := ch.Write(kex[:])
+	if err != nil || n != len(kex) {
+		return false
+	}
+	zero(kex[:], 0)
+
+	return true
 }
 
 // Listen initialises the SChannel and complete a key exchange over
@@ -287,38 +332,10 @@ func Listen(ch Channel, signer *[IdentityPrivateSize]byte, peer *[IdentityPublic
 		return nil, false
 	}
 
-	var sk [kexPrvSize]byte
-	var pk [kexPubSize]byte
-
-	if !generateKeypair(&sk, &pk) {
+	if !sch.listenKEX(ch, signer, peer) {
 		return nil, false
 	}
 
-	var kex [kexPubSize + SignatureSize]byte
-	_, err := io.ReadFull(ch, kex[:])
-	if err != nil {
-		return nil, false
-	}
-
-	if !verifyKEX(&kex, peer) {
-		return nil, false
-	}
-
-	if !sch.doKEX(sk[:], kex[:kexPubSize], false) {
-		return nil, false
-	}
-
-	copy(kex[:], pk[:])
-	if !signKEX(&kex, signer) {
-		return nil, false
-	}
-
-	n, err := ch.Write(kex[:])
-	if err != nil || n != len(kex) {
-		return nil, false
-	}
-
-	zero(kex[:], 0)
 	sch.Channel = ch
 	sch.ready = true
 	return sch, true
@@ -387,12 +404,7 @@ func (sch *SChannel) decrypt(in []byte) ([]byte, bool) {
 	return secretbox.Open(nil, in[nonceSize:], &nonce, &sch.rkey)
 }
 
-// Receive reads a new message from the secure channel.
-func (sch *SChannel) Receive() (*Message, bool) {
-	if !sch.ready {
-		return nil, false
-	}
-
+func (sch *SChannel) getMessage() ([]byte, bool) {
 	var mlen uint32
 	err := binary.Read(sch.Channel, binary.BigEndian, &mlen)
 	if err != nil {
@@ -412,10 +424,14 @@ func (sch *SChannel) Receive() (*Message, bool) {
 	if !ok {
 		return nil, false
 	}
-	defer zero(sch.buf[:], int(mlen))
-	sch.RData += uint64(len(out))
 
-	e, ok := unpackMessage(out)
+	zero(sch.buf[:], int(mlen))
+	sch.RData += uint64(len(out))
+	return out, true
+}
+
+func (sch *SChannel) extractMessage(in []byte) (*Message, bool) {
+	e, ok := unpackMessage(in)
 	if !ok {
 		return nil, false
 	}
@@ -451,7 +467,21 @@ func (sch *SChannel) Receive() (*Message, bool) {
 	m.Contents = make([]byte, int(e.PayloadLength))
 	copy(m.Contents, e.Payload[:])
 	zero(e.Payload[:], int(e.PayloadLength))
-	return m, true
+
+}
+
+// Receive reads a new message from the secure channel.
+func (sch *SChannel) Receive() (*Message, bool) {
+	if !sch.ready {
+		return nil, false
+	}
+
+	out, ok := sch.getMessage()
+	if !ok {
+		return nil, false
+	}
+
+	return sch.extractMessage(out)
 }
 
 func (sch *SChannel) receiveKEX(e *envelope) bool {
