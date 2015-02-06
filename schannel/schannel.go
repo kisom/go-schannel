@@ -224,7 +224,7 @@ func (sch *SChannel) doKEX(sk []byte, pk []byte, dialer bool) bool {
 }
 
 // dialKEX handles the initial dialing key exchange.
-func (sch *SChannel) dialKEX(signer *[IdentityPrivateSize]byte, peer *[IdentityPublicSize]byte) bool {
+func (sch *SChannel) dialKEX(ch Channel, signer *[IdentityPrivateSize]byte, peer *[IdentityPublicSize]byte) bool {
 	var sk [kexPrvSize]byte
 	var pk [kexPubSize]byte
 
@@ -467,7 +467,7 @@ func (sch *SChannel) extractMessage(in []byte) (*Message, bool) {
 	m.Contents = make([]byte, int(e.PayloadLength))
 	copy(m.Contents, e.Payload[:])
 	zero(e.Payload[:], int(e.PayloadLength))
-
+	return m, true
 }
 
 // Receive reads a new message from the secure channel.
