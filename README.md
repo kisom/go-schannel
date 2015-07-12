@@ -1,7 +1,10 @@
 # go-schannel
 
 This is an interoperable Go implementation of
-[libschannel](https://github.com/kisom/libschannel).
+[libschannel](https://github.com/kisom/libschannel). It is intended
+for small embedded systems (and their counterpart server programs) for
+which a full-fledged PKI is unnecessary; most people will want to use
+a mutally-authenticated TLS-secured TCP connection.
 
 GoDoc: [go-schannel](https://godoc.org/github.com/kisom/go-schannel/schannel)
 
