@@ -21,7 +21,7 @@ var prng = rand.Reader
 
 const (
 	// BufSize is the maximum size of an encrypted message.
-	BufSize = 2097152 // 2MiB: 2 * 1024 * 1024B
+	BufSize = 2097152 // 2KiB: 2 * 1024 * 1024B
 
 	// IdentityPrivateSize is the size of an identity private key.
 	IdentityPrivateSize = ed25519.PrivateKeySize
